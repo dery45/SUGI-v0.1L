@@ -262,8 +262,5 @@ CHROMA_PORT = 8000          # ganti port jika perlu
 
 MIT License – bebas digunakan, dimodifikasi, dan dikembangkan lebih lanjut.
 
-<<<<<<< HEAD
 Last updated: Maret 2026 · v0.1L (Qwen2.5-1.5B + MongoDB Daily Insight) · RAG Score 93/100
-=======
-Last updated: Maret 2026 · v0.1L (Qwen2.5-1.5B upgrade)
->>>>>>> eb565a3307ea1b08d19a55d4fef5742defbc3231
+
