@@ -184,11 +184,28 @@ def load_or_build_bm25() -> BM25Retriever:
         return retriever
 
     print("🔨 Building BM25 index (first run)...")
-    all_docs = vector_store.get(include=["documents", "metadatas"])
-    docs_for_bm25 = [
-        Document(page_content=doc, metadata=meta)
-        for doc, meta in zip(all_docs["documents"], all_docs["metadatas"])
-    ]
+    # Fetch in batches — ChromaDB/SQLite throws "too many SQL variables"
+    # if all IDs are fetched at once on large collections.
+    BATCH_SIZE   = 500
+    docs_for_bm25: list[Document] = []
+    offset       = 0
+
+    # First pass: get all IDs (lightweight, no content)
+    all_ids_result = vector_store._collection.get(include=[])
+    all_ids        = all_ids_result["ids"]
+    total          = len(all_ids)
+    print(f"   Found {total:,} documents — fetching in batches of {BATCH_SIZE}...")
+
+    while offset < total:
+        batch_ids = all_ids[offset : offset + BATCH_SIZE]
+        batch     = vector_store._collection.get(
+            ids     = batch_ids,
+            include = ["documents", "metadatas"],
+        )
+        for doc_text, meta in zip(batch["documents"], batch["metadatas"]):
+            docs_for_bm25.append(Document(page_content=doc_text, metadata=meta or {}))
+        offset += BATCH_SIZE
+        print(f"   Fetched {min(offset, total):,}/{total:,}...", end="\r")
     retriever   = BM25Retriever.from_documents(docs_for_bm25)
     retriever.k = 4
     with open(BM25_CACHE_PATH, "wb") as f:

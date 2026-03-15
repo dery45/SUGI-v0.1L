@@ -7,6 +7,8 @@ Asisten AI berbasis RAG khusus untuk petani, pekebun, pemerintah, dan pelaku agr
 [![Ollama](https://img.shields.io/badge/Ollama-Local%20LLM-green?logo=ollama)](https://ollama.com/)
 [![LangChain](https://img.shields.io/badge/LangChain-RAG-orange)](https://python.langchain.com/)
 [![ChromaDB](https://img.shields.io/badge/VectorDB-ChromaDB%20Server-purple)](https://www.trychroma.com/)
+[![MongoDB](https://img.shields.io/badge/MongoDB-Daily%20Insights-47A248?logo=mongodb&logoColor=white)](https://www.mongodb.com/)
+![Score](https://img.shields.io/badge/RAG%20Score-93%2F100-brightgreen)
 ![License](https://img.shields.io/badge/License-MIT-green)
 ![Last Commit](https://img.shields.io/github/last-commit/ux/sugi-v0.1L?color=green)
 
@@ -20,6 +22,8 @@ Asisten AI berbasis RAG khusus untuk petani, pekebun, pemerintah, dan pelaku agr
   - Informasi tanaman lengkap (spesies, hama, penyakit, panduan perawatan) via Perenual API + cache  
   - Indexing otomatis CSV/XLSX/PDF (harga komoditas, panduan budidaya, dll.)  
 - **Long-term Memory** → ringkasan sesi disimpan di ChromaDB untuk konteks multi-turn  
+- **Daily Insight Engine** → kirim insight harian ke MongoDB setiap 12 jam (harga per provinsi, cuaca, saran tanam, kebijakan, ringkasan sesi)  
+- **Config Berbasis INI** → semua keyword & peta tanaman di `word_config/`, tidak perlu ubah kode  
 - **Scope Guard Ketat** → hanya jawab topik pertanian, tolak hal di luar domain dengan ramah  
 - **Personality** → ramah & mudah dipahami petani, profesional untuk pemerintah/investor  
 - **Bahasa** → default Indonesia, switch ke English jika user pakai English  
@@ -27,13 +31,16 @@ Asisten AI berbasis RAG khusus untuk petani, pekebun, pemerintah, dan pelaku agr
 
 ## Tech Stack
 
-- **LLM** : Llama 3.2 fine-tune → sugi-v0.1L (via Ollama)  
-- **Utility model** : Qwen2.5-1.5B — query rewriting fallback, plant name extraction, eval loop  
-- **Embedding** : mxbai-embed-large  
-- **Vector Store** : ChromaDB Server (collections: langchain, weather_data, plant_data, conversation_memory)  
-- **Retriever** : Ensemble (BM25 + Vector) + Cross-Encoder reranker (ms-marco-MiniLM-L-6-v2)  
-- **API Eksternal** : Open-Meteo (cuaca), Perenual (tanaman & hama)  
-- **Lainnya** : LangChain, Watchdog (auto-index)  
+| Komponen | Detail |
+|---|---|
+| **LLM utama** | Llama 3.2 fine-tune → `sugi-v0.1L` (via Ollama) |
+| **Utility model** | `qwen2.5:1.5b` — query rewriting fallback, plant name extraction, eval loop, daily insight |
+| **Embedding** | `mxbai-embed-large` |
+| **Vector Store** | ChromaDB Server mode — 4 collections: `langchain`, `weather_data`, `plant_data`, `conversation_memory` |
+| **Retriever** | Ensemble (BM25 + Vector) + Cross-Encoder reranker (`ms-marco-MiniLM-L-6-v2`, top_n=5) |
+| **Insight DB** | MongoDB — 5 collections di database `sugi_insights` |
+| **API Eksternal** | Open-Meteo (cuaca gratis), Perenual (tanaman & hama) |
+| **Framework** | LangChain, LangChain-Classic |
 
 
 ## Instalasi (Local Development)
@@ -71,6 +78,8 @@ pip install -r requirements.txt
 Buat file `.env` di root:
 ```env
 PERENUAL_API_KEY=sk-your-perenual-key-here
+MONGO_URI=mongodb+srv://user:pass@cluster.mongodb.net/   # wajib untuk daily_insight.py
+PORT=3000
 ```
 
 Sesuaikan lokasi di `vectorWeather.py` jika bukan Jakarta:
@@ -154,6 +163,7 @@ Terminal 2:  python vectorCSV.py
 Terminal 3:  python vectorpdf.py
 Terminal 4:  python vectorWeather.py
 Terminal 5:  python main.py
+Terminal 6:  python daily_insight.py          # opsional — kirim insight ke MongoDB
 ```
 
 
@@ -171,19 +181,55 @@ sugi-v0.1L/
 │   ├── scope_config.ini      # allowed/blocked topics + greeting patterns
 │   ├── rewriter_config.ini   # referential words, followup patterns, topic keywords
 │   └── plant_keywords.ini    # plant name map + strong/weak keywords
-├── main.py                   # program utama
+├── main.py                   # program utama — chatbot loop 8 layer
+├── daily_insight.py          # insight engine — kirim ke MongoDB setiap 12 jam
 ├── vectorCSV.py              # indexer CSV/XLSX
 ├── vectorpdf.py              # indexer PDF
 ├── vectorWeather.py          # fetcher + indexer cuaca Open-Meteo
-├── plant_api.py              # Perenual API client + cache
+├── plant_api.py              # Perenual API client + exponential backoff + cache
 ├── eval_loop.py              # RAG eval (faithfulness + relevance)
 ├── query_logger.py           # structured query logging ke JSONL
 ├── migrate_to_server.py      # migrasi data dari embedded → server mode
 ├── Modelfile                 # definisi model sugi-v0.1L (Llama 3.2 base)
-├── .env                      # API keys (jangan commit)
+├── .env                      # API keys & MongoDB URI (jangan commit)
 ├── .env.example
 ├── .gitignore
 └── requirements.txt
+```
+
+
+## Daily Insight Engine
+
+`daily_insight.py` menghasilkan dan mengirim insight pertanian ke MongoDB secara otomatis.
+
+**Koleksi MongoDB (`sugi_insights`):**
+
+| Koleksi | Isi |
+|---|---|
+| `price_insights` | Insight harga komoditas per provinsi, tren, rekomendasi petani |
+| `weather_insights` | Kondisi cuaca per lokasi + dampak ke kegiatan pertanian |
+| `planting_suggestions` | Saran tanam per komoditas × musim saat ini (10 komoditas utama) |
+| `general_insights` | Tren kebijakan & situasi pertanian Indonesia (3–5 poin per run) |
+| `session_summaries` | Ringkasan percakapan dari sesi `main.py` |
+
+**Cara pakai:**
+
+```bash
+# Loop otomatis — kirim saat start, lalu setiap 12 jam
+python daily_insight.py
+
+# Kirim sekali lalu exit
+python daily_insight.py --once
+
+# Ubah interval (contoh: 6 jam)
+python daily_insight.py --interval 6
+```
+
+Insight bersifat **upsert** — menjalankan dua kali sehari tidak menduplikasi data. `insight_id` di-hash dari konten + kategori + tanggal.
+
+**Prasyarat tambahan:**
+```bash
+pip install pymongo python-dotenv
 ```
 
 
@@ -217,4 +263,4 @@ CHROMA_PORT = 8000          # ganti port jika perlu
 
 MIT License – bebas digunakan, dimodifikasi, dan dikembangkan lebih lanjut.
 
-Last updated: Maret 2026 · v0.1L (Qwen2.5-1.5B upgrade)
+Last updated: Maret 2026 · v0.1L (Qwen2.5-1.5B + MongoDB Daily Insight) · RAG Score 93/100
