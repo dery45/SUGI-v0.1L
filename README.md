@@ -8,7 +8,6 @@ Asisten AI berbasis RAG khusus untuk petani, pekebun, pemerintah, dan pelaku agr
 [![LangChain](https://img.shields.io/badge/LangChain-RAG-orange)](https://python.langchain.com/)
 [![ChromaDB](https://img.shields.io/badge/VectorDB-ChromaDB%20Server-purple)](https://www.trychroma.com/)
 ![License](https://img.shields.io/badge/License-MIT-green)
-![Last Commit](https://img.shields.io/github/last-commit/ux/sugi-v0.1L?color=green)
 
 ## 🔥 Fitur Utama
 
